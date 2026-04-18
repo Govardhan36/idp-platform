@@ -1,0 +1,30 @@
+# terraform/modules/eks/outputs.tf
+# ─────────────────────────────────────────────────────────────────
+# WHAT THIS FILE DOES:
+# Declares OUTPUT values the module exposes after creation.
+# Other modules (like envs/dev/main.tf) can read these values.
+# Like a function's return values.
+# ─────────────────────────────────────────────────────────────────
+
+output "cluster_name" {
+  description = "EKS cluster name"
+  # value references a resource attribute: resource_type.resource_name.attribute
+  value       = aws_eks_cluster.main.name
+}
+
+output "cluster_endpoint" {
+  description = "EKS API server endpoint URL"
+  value       = aws_eks_cluster.main.endpoint
+}
+
+output "cluster_ca_certificate" {
+  description = "Base64-encoded cluster certificate authority data"
+  # [0] = first item in the list (there is only one)
+  value     = aws_eks_cluster.main.certificate_authority[0].data
+  sensitive = true    # sensitive = hide value in Terraform output (security)
+}
+
+output "node_group_arn" {
+  description = "ARN of the EKS node group"
+  value       = aws_eks_node_group.main.arn
+}

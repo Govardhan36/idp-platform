@@ -1,0 +1,47 @@
+# terraform/modules/vpc/variables.tf
+# ─────────────────────────────────────────────────────────────────
+# WHAT THIS FILE DOES:
+# Defines INPUT variables for the VPC module.
+# Like function parameters — caller passes values in.
+# ─────────────────────────────────────────────────────────────────
+
+# variable block = declares an input the module accepts
+variable "project_name" {
+  description = "Name prefix for all resources (e.g. 'idp-dev')"
+  type        = string   # Must be a text value
+}
+
+variable "environment" {
+  description = "Deployment environment: dev, staging, or prod"
+  type        = string
+
+  # validation block = checks the input is one of allowed values
+  validation {
+    condition     = contains(["dev", "staging", "prod"], var.environment)
+    error_message = "Environment must be dev, staging, or prod."
+  }
+}
+
+variable "vpc_cidr" {
+  description = "IP range for the VPC (e.g. 10.0.0.0/16)"
+  type        = string
+  default     = "10.0.0.0/16"   # default = used if caller doesn't provide it
+}
+
+variable "public_subnet_cidrs" {
+  description = "IP ranges for public subnets — one per availability zone"
+  type        = list(string)     # list(string) = array of text values
+  default     = ["10.0.1.0/24", "10.0.2.0/24"]
+}
+
+variable "private_subnet_cidrs" {
+  description = "IP ranges for private subnets — one per availability zone"
+  type        = list(string)
+  default     = ["10.0.10.0/24", "10.0.11.0/24"]
+}
+
+variable "availability_zones" {
+  description = "AWS availability zones to use (for high availability)"
+  type        = list(string)
+  default     = ["ap-south-1a", "ap-south-1b"]  # Mumbai AZs
+}

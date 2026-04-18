@@ -1,0 +1,21 @@
+# terraform/modules/vpc/outputs.tf
+output "vpc_id" {
+  description = "ID of the created VPC"
+  value       = aws_vpc.main.id
+}
+
+output "public_subnet_ids" {
+  description = "IDs of all public subnets"
+  # aws_subnet.public is a list (we used count) — use [*].id to get all IDs
+  value       = aws_subnet.public[*].id
+}
+
+output "private_subnet_ids" {
+  description = "IDs of all private subnets — passed to EKS module"
+  value       = aws_subnet.private[*].id
+}
+
+output "nat_gateway_ids" {
+  description = "IDs of NAT Gateways"
+  value       = aws_nat_gateway.main[*].id
+}

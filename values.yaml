@@ -1,0 +1,155 @@
+# terraform/modules/vpc/main.tf
+# ─────────────────────────────────────────────────────────────────
+# WHAT THIS FILE DOES:
+# Creates the network (VPC) on AWS where everything lives.
+# Think of a VPC like your private data-center inside AWS.
+# ─────────────────────────────────────────────────────────────────
+
+# This tells Terraform we are using the AWS provider (plugin)
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"   # Download from HashiCorp registry
+      version = "~> 5.0"          # Use version 5.x (any patch version)
+    }
+  }
+}
+
+# ── VPC (Virtual Private Cloud) ────────────────────────────────
+# aws_vpc creates an isolated network on AWS
+# cidr_block = IP address range — 10.0.0.0/16 means
+#   we can have IPs from 10.0.0.0 to 10.0.255.255 (65,536 IPs)
+resource "aws_vpc" "main" {
+  cidr_block           = var.vpc_cidr          # e.g. "10.0.0.0/16"
+  enable_dns_hostnames = true                  # Allow DNS names for EC2s
+  enable_dns_support   = true                  # Enable DNS resolution
+
+  # Tags are labels — "Name" tag shows in AWS console
+  tags = {
+    Name        = "${var.project_name}-vpc"
+    Environment = var.environment
+    ManagedBy   = "terraform"                  # Shows infra is managed by code
+  }
+}
+
+# ── PUBLIC SUBNETS ──────────────────────────────────────────────
+# Subnets are smaller networks inside the VPC
+# PUBLIC subnets = can talk to the internet (for load balancers)
+# We create one subnet per availability zone for high availability
+
+resource "aws_subnet" "public" {
+  # count = how many subnets to create (one per AZ)
+  count             = length(var.availability_zones)
+
+  vpc_id            = aws_vpc.main.id          # Put this subnet inside our VPC
+  # element() picks the Nth item from the list
+  # e.g. public_subnet_cidrs[0] = "10.0.1.0/24"
+  cidr_block        = element(var.public_subnet_cidrs, count.index)
+  availability_zone = element(var.availability_zones, count.index)
+
+  # Auto-assign public IP so instances can reach internet
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name = "${var.project_name}-public-${count.index + 1}"
+    # This tag is REQUIRED for EKS to discover public subnets
+    "kubernetes.io/role/elb" = "1"
+  }
+}
+
+# ── PRIVATE SUBNETS ─────────────────────────────────────────────
+# PRIVATE subnets = no direct internet access (for EKS worker nodes)
+# More secure — attackers can't reach your K8s nodes directly
+resource "aws_subnet" "private" {
+  count             = length(var.availability_zones)
+
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = element(var.private_subnet_cidrs, count.index)
+  availability_zone = element(var.availability_zones, count.index)
+
+  tags = {
+    Name = "${var.project_name}-private-${count.index + 1}"
+    # This tag tells EKS to use these subnets for internal load balancers
+    "kubernetes.io/role/internal-elb" = "1"
+  }
+}
+
+# ── INTERNET GATEWAY ────────────────────────────────────────────
+# Gateway = door between your VPC and the internet
+# Without this, nothing in the VPC can reach the internet
+resource "aws_internet_gateway" "main" {
+  vpc_id = aws_vpc.main.id
+
+  tags = {
+    Name = "${var.project_name}-igw"
+  }
+}
+
+# ── NAT GATEWAY ─────────────────────────────────────────────────
+# NAT = Network Address Translation
+# Allows PRIVATE subnet machines to reach internet (for updates)
+# but internet CANNOT initiate connections to them (secure!)
+# Elastic IP = static public IP address for the NAT gateway
+resource "aws_eip" "nat" {
+  count  = length(var.availability_zones)
+  domain = "vpc"                              # Must be "vpc" for VPC use
+
+  tags = {
+    Name = "${var.project_name}-nat-eip-${count.index + 1}"
+  }
+}
+
+resource "aws_nat_gateway" "main" {
+  count         = length(var.availability_zones)
+  allocation_id = aws_eip.nat[count.index].id          # Attach the static IP
+  subnet_id     = aws_subnet.public[count.index].id    # NAT lives in PUBLIC subnet
+
+  # depends_on ensures Internet Gateway exists before NAT gateway
+  depends_on = [aws_internet_gateway.main]
+
+  tags = {
+    Name = "${var.project_name}-nat-${count.index + 1}"
+  }
+}
+
+# ── ROUTE TABLES ────────────────────────────────────────────────
+# Route tables = GPS for network traffic
+# They tell traffic WHERE to go
+
+# Public route table: send internet traffic to Internet Gateway
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block = "0.0.0.0/0"                  # "0.0.0.0/0" means ALL traffic
+    gateway_id = aws_internet_gateway.main.id  # Send it to the internet
+  }
+
+  tags = { Name = "${var.project_name}-public-rt" }
+}
+
+# Associate public route table with each public subnet
+resource "aws_route_table_association" "public" {
+  count          = length(var.availability_zones)
+  subnet_id      = aws_subnet.public[count.index].id
+  route_table_id = aws_route_table.public.id
+}
+
+# Private route table: send internet traffic through NAT (not directly)
+resource "aws_route_table" "private" {
+  count  = length(var.availability_zones)
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.main[count.index].id  # Go through NAT
+  }
+
+  tags = { Name = "${var.project_name}-private-rt-${count.index + 1}" }
+}
+
+resource "aws_route_table_association" "private" {
+  count          = length(var.availability_zones)
+  subnet_id      = aws_subnet.private[count.index].id
+  route_table_id = aws_route_table.private[count.index].id
+}
